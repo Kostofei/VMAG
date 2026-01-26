@@ -1,7 +1,11 @@
-import asyncio
+from decimal import Decimal
+
+from django.db import transaction
 from asgiref.sync import sync_to_async
-from datetime import datetime, timedelta
+from datetime import datetime
 from playwright.async_api import async_playwright, Browser, Page, Playwright, Locator
+
+
 
 ROUTE_TYPES = [
     ('one-way', 'one-way'),
@@ -95,20 +99,59 @@ class FlightParser:
     @staticmethod
     @sync_to_async
     def _save_flights_to_db(flights_data: list) -> None:
-        """Сохранение списка рейсов в базу данных Django."""
+        """Сохранение билетов и сегментов согласно структуре моделей Django."""
         if not flights_data:
             print("Нет данных для сохранения.")
             return
 
-        from .models import Flight  # Импорт внутри, чтобы избежать циклической зависимости
+        from .models import Ticket, FlightSegment
 
-        flights_to_create = []
-        for item in flights_data:
-            flights_to_create.append(Flight(**item))
+        tickets_processed = 0
 
-        created_objects = Flight.objects.bulk_create(flights_to_create, ignore_conflicts=True)
-        print(f"Успешно сохранено {len(created_objects)} рейсов в БД.")
-        return
+        try:
+            with transaction.atomic():
+                for ticket_dict in flights_data:
+
+                    segments_list = ticket_dict.pop('segments', [])
+
+                    # Создаем или обновляем Ticket
+                    ticket_obj, created = Ticket.objects.update_or_create(
+                        ticket_uid=ticket_dict.get('ticket_uid'),
+                        defaults={
+                            'validating_airline': ticket_dict.get('validating_airline'),
+                            'price': Decimal(str(ticket_dict.get('price', 0))),
+                            'route_type': ticket_dict.get('route_type'),
+                        }
+                    )
+
+                    # Очищаем старые сегменты для этого билета (если он обновляется)
+                    FlightSegment.objects.filter(ticket=ticket_obj).delete()
+
+                    # Подготавливаем новые сегменты
+                    segments_to_create = []
+                    for seg_data in segments_list:
+                        segments_to_create.append(
+                            FlightSegment(
+                                ticket=ticket_obj,  # Django сам подставит ticket_uid
+                                operating_airline=seg_data.get('operating_airline'),
+                                departure=seg_data.get('departure'),
+                                departure_date=seg_data.get('departure_date'),
+                                arrival=seg_data.get('arrival'),
+                                arrival_date=seg_data.get('arrival_date'),
+                                order=seg_data.get('order')
+                            )
+                        )
+
+                    # Массовое создание сегментов
+                    if segments_to_create:
+                        FlightSegment.objects.bulk_create(segments_to_create)
+
+                    tickets_processed += 1
+
+            print(f"Успешно обработано {tickets_processed} билетов в базе данных.")
+
+        except Exception as e:
+            print(f"Критическая ошибка при сохранении в БД: {e}")
 
     @staticmethod
     def _clean_datetime(date_str: str, time_str: str):
@@ -345,15 +388,15 @@ class FlightParser:
             page = await context.new_page()
 
             try:
-                # 1. Инициализируем сессию через главную страницу и переходим по прямому URL к результатам
+                # Инициализируем сессию через главную страницу и переходим по прямому URL к результатам
                 await self._navigate_to_results(page, search_data)
 
-                # 2. Парсим (внутри уже есть скролл)
+                # Парсим (внутри уже есть скролл)
                 flights_list = await self._parse_results(page, search_data)
 
                 if len(flights_list) > 0:
-                    # 3. Сохраняем в БД (это синхронная операция Django)
-                    # await self._save_flights_to_db(flights_list)
+                    # Сохраняем в БД (это синхронная операция Django)
+                    await self._save_flights_to_db(flights_list)
 
                     print(f"Успешно собрано {len(flights_list)} рейсов.")
                     return flights_list
