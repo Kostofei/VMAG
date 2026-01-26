@@ -21,10 +21,10 @@ class Flight(models.Model):
     ]
 
     # Основные поля
-    origin = models.CharField(max_length=10, verbose_name="Аэропорт вылета")
+    departure = models.CharField(max_length=10, verbose_name="Аэропорт вылета")
     departure_date = models.DateTimeField(verbose_name="Дата и время вылета")
 
-    destination = models.CharField(max_length=10, verbose_name="Аэропорт прилета")
+    arrival = models.CharField(max_length=10, verbose_name="Аэропорт прилета")
     arrival_date = models.DateTimeField(null=True, blank=True, verbose_name="Дата и время прилета")
 
     price = models.DecimalField(max_digits=10, decimal_places=2, verbose_name="Цена")
@@ -36,6 +36,7 @@ class Flight(models.Model):
         verbose_name="Тип рейса"
     )
 
+
     # Служебные поля
     created_at = models.DateTimeField(auto_now_add=True)
 
@@ -46,7 +47,7 @@ class Flight(models.Model):
         # одной авиакомпании по той же цене на то же время
         constraints = [
             models.UniqueConstraint(
-                fields=['origin', 'destination', 'departure_date', 'airline', 'price'],
+                fields=['departure', 'departure_date', 'arrival', 'arrival_date', 'price', 'airline'],
                 name='unique_flight_catch'
             )
         ]

@@ -16,7 +16,7 @@ class FlightParser:
         return await playwright.chromium.launch(
             headless=False,
             # headless=True,
-            slow_mo=1000  # Замедляем на 1 сек, чтобы видеть каждое действие
+            # slow_mo=1000  # Замедляем на 1 сек, чтобы видеть каждое действие
         )
 
     @staticmethod
@@ -62,13 +62,13 @@ class FlightParser:
         no_change_counter = 0
 
         while True:
-            # 1. Прокручиваем страницу вниз (эмуляция нажатия End)
+            # Прокручиваем страницу вниз (эмуляция нажатия End)
             await page.keyboard.press("End")
 
-            # 2. Ждем загрузки
+            # Ждем загрузки
             await page.wait_for_timeout(retry_interval)
 
-            # 3. Считаем количество карточек билетов
+            # Считаем количество карточек билетов
             current_count = await page.locator(".ticket").count()
 
             print(f"Загружено билетов: {current_count}")
@@ -116,20 +116,26 @@ class FlightParser:
         Ждет загрузки контента: либо появления билетов, либо сообщения, что рейсов нет.
         Возвращает True, если билеты найдены, и False, если рейсов нет или случился тайм-аут.
         """
+
+        # Селектор ищет блок прогресс-бара, внутри которого есть наш финальный текст
+        final_status_selector = ".ui-progress-bar:has-text('You got our best deals')"
+        nothing_found_selector = ".nothing-found"
+
         try:
-            # Ждем появления хотя бы одного реального билета ИЛИ блока "Nothing found"
-            await page.wait_for_selector(
-                ".ticket:not(.ticket--placeholder), .nothing-found",
-                timeout=15000
+            # Ждем загрузки всех билетов ИЛИ блока "Nothing found"
+            result = await page.wait_for_selector(
+                f"{final_status_selector}, {nothing_found_selector}",
+                timeout=30000
             )
 
-            # Проверяем, что именно появилось. Если это блок "Ничего не найдено" — возвращаем False
-            if await page.locator(".nothing-found").count() > 0:
-                print("Инфо: Рейсов не найдено по данному запросу.")
+            # Проверяем, что именно сработало
+            content = await result.inner_text()
+            if "best deals" in content:
+                print("Успех: Все билеты загружены.")
+                return True
+            else:
+                print("Инфо: Рейсов не найдено.")
                 return False
-
-            # Если мы здесь, значит билеты найдены
-            return True
 
         except Exception as e:
             print(f"Ошибка при ожидании контента: {e}")
@@ -239,118 +245,41 @@ class FlightParser:
         и переходит к результатам поиска.
         """
 
-        # 1. Генерируем URL
+        # Генерируем URL
         search_url = self._construct_search_url(search_data)
         print(f"Generated URL: {search_url}")
 
-        # 2. Инициализация сессии (Warming up)
-        # Заходим на главную, чтобы сервер проставил необходимые куки
+        # Инициализация сессии
         print("Warming up session on homepage...")
         await page.goto(self.base_url, wait_until="domcontentloaded")
 
-        # 3. Быстрая попытка закрыть GDPR, чтобы он не перекрывал элементы
+        # Переход по сгенерированному URL к результатам
+        print("Navigating to search results...")
+        await page.goto(search_url, wait_until="domcontentloaded")
+
+        # Закрываем GDPR, чтобы он не перекрывал элементы
         gdpr_button = page.locator('[data-qa="gdpr-popup_1_close"]')
 
         try:
-            # Ждем появления кнопки максимум 0,5 секунды
-            if await gdpr_button.is_visible(timeout=500):
+            # Ждем появления кнопки максимум 1 секунду
+            if await gdpr_button.is_visible(timeout=1000):
                 await gdpr_button.click()
                 print("GDPR окно закрыто.")
         except Exception:
             print("GDPR окно не обнаружено, продолжаем...")
 
-        # 4. Переход по сгенерированному URL к результатам
-        print("Navigating to search results...")
-        await page.goto(search_url, wait_until="domcontentloaded")
-
-    # async def _parse_results(self, page: Page, search_data: dict) -> list:
-    #     """Сбор данных из уже загруженных карточек."""
-    #
-    #     try:
-    #         # Ждем появления контейнера с результатами или блока "Ничего не найдено"
-    #         # timeout=15000 (15 секунд обычно хватает)
-    #         await page.wait_for_selector(".ticket:not(.ticket--placeholder), .nothing-found", timeout=15000)
-    #     except Exception:
-    #         print("Тайм-аут: страница грузится слишком долго или зависла")
-    #         return []
-    #
-    #         # Проверяем, появилось ли окно "Nothing found"
-    #     if await page.locator(".nothing-found").count() > 0:
-    #         print("Рейсов не найдено для этих дат.")
-    #         return []
-    #
-    #     # Скроллим до упора
-    #     await self._scroll_page(page)
-    #
-    #     results = []
-    #
-    #     # Теперь берем все карточки
-    #     tickets = page.locator(".ticket:not(.ticket--placeholder)")
-    #     count = await tickets.count()
-    #
-    #     print(tickets, count)
-    #     print(f"Начинаем парсинг {count} билетов...")
-    #
-    #     for i in range(count):
-    #         # Получаем конкретную карточку
-    #         ticket = tickets.nth(i)
-    #
-    #         try:
-    #             # Кликаем, чтобы вызвать подгрузку деталей в DOM
-    #             preview = ticket.locator(".ticket__preview")
-    #             await preview.click()
-    #
-    #             # 2. Ждем, пока в этом билете появятся детали (Ticket ID)
-    #             details_box = ticket.locator(".ticket-details")
-    #             await details_box.wait_for(state="attached", timeout=500)
-    #
-    #             # --- Авиакомпания ---
-    #             airline_name = await ticket.locator(".ticket__airlines-name").text_content()
-    #
-    #             # --- Цена ---
-    #             price_text = await ticket.locator(".ticket__total-price span").first.text_content()
-    #             price = float(price_text.replace("$", "").replace(",", "").strip())
-    #
-    #             # --- Время и Аэропорты ---
-    #             origin = await ticket.locator(".ticket__flight-from .ticket__flight-airport").first.text_content()
-    #             dep_time = await ticket.locator(".ticket__flight-from .ticket__flight-time").first.text_content()
-    #             dep_date = await ticket.locator(".ticket-details-group__title-date").first.text_content()
-    #             full_departure_date = datetime.strptime(
-    #                 f"{dep_date.strip()} {dep_time.strip()}",
-    #                 "%a, %b %d, %Y %I:%M %p"
-    #             )
-    #
-    #             destination = await ticket.locator(".ticket__flight-to .ticket__flight-airport").first.text_content()
-    #             arr_time = await ticket.locator(".ticket__flight-to .ticket__flight-time").first.text_content()
-    #             full_text_date = await ticket.locator(".ticket-details-group__summary-item").nth(1).inner_text()
-    #             arr_date = full_text_date.replace("Arrives:", "").strip()
-    #             arrival_dt = datetime.strptime(
-    #                 f"{arr_date} {arr_time.strip()}",
-    #                 "%a, %b %d, %Y %I:%M %p"
-    #             )
-    #
-    #             route_type = self._determine_trip_type(search_data['legs'])
-    #
-    #             # Собираем в словарь
-    #             flight_data = {
-    #                 "origin": origin.strip(),
-    #                 "destination": destination.strip(),
-    #                 "departure_date": full_departure_date,
-    #                 "arrival_date": arrival_dt,
-    #                 "price": price,
-    #                 "airline": airline_name.strip(),
-    #                 "route_type": route_type,
-    #             }
-    #             results.append(flight_data)
-    #
-    #         except Exception as e:
-    #             print(f"Ошибка при парсинге билета {i}: {e}")
-    #             continue
-    #
-    #     return results
-
     async def _parse_results(self, page: Page, search_data: dict) -> list:
         """Главный метод управления парсингом."""
+
+        # Отключаем анимации, чтобы все раскрывалось мгновенно
+        await page.add_style_tag(content="""
+                *, *::before, *::after {
+                    transition-duration: 0s !important;
+                    transition-delay: 0s !important;
+                    animation-duration: 0s !important;
+                    animation-delay: 0s !important;
+                }
+            """)
 
         # Ждем контент
         if not await self._wait_for_content(page):
