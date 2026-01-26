@@ -14,7 +14,7 @@ class FlightSegmentInline(admin.TabularInline):
 @admin.register(Ticket)
 class TicketAdmin(admin.ModelAdmin):
     """Админка для билетов с вложенными сегментами."""
-    list_display = ('ticket_uid', 'get_price', 'route_type')
+    list_display = ('validating_airline', 'ticket_uid', 'get_price', 'route_type')
     list_filter = ('route_type',)
     search_fields = ('ticket_uid',)
     inlines = [FlightSegmentInline]
@@ -33,12 +33,12 @@ class FlightSegmentAdmin(admin.ModelAdmin):
     list_display = (
         'get_ticket_uid',
         'order',
-        'airline_name',
+        'operating_airline',
         'get_route',
         'departure_date'
     )
-    list_filter = ('airline_name', 'departure', 'arrival')
-    search_fields = ('ticket__ticket_uid', 'airline_name', 'departure', 'arrival')
+    list_filter = ('operating_airline', 'departure', 'arrival')
+    search_fields = ('ticket__ticket_uid', 'operating_airline', 'departure', 'arrival')
 
     @admin.display(description='Ticket UID', ordering='ticket__ticket_uid')
     def get_ticket_uid(self, obj):

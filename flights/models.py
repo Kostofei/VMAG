@@ -7,11 +7,16 @@ class Ticket(models.Model):
     Содержит агрегированную информацию: общую стоимость и уникальный ID системы бронирования.
     """
     ROUTE_TYPES = [
-        ('one_way', 'One Way'),
-        ('round_trip', 'Round Trip'),
-        ('multi_city', 'Multi City'),
+        ('one_way', 'One-Way'),
+        ('round_trip', 'Roundtrip'),
+        ('multi_city', 'Multi-City'),
     ]
 
+    validating_airline = models.CharField(
+        max_length=100,
+        verbose_name="Продавец (Валидирующая компания)",
+        null=True, blank=True
+    )
     ticket_uid = models.CharField(
         max_length=50,
         unique=True,
@@ -52,9 +57,9 @@ class FlightSegment(models.Model):
         related_name='segments',
         verbose_name="Билет"
     )
-    airline_name = models.CharField(
+    operating_airline = models.CharField(
         max_length=100,
-        verbose_name="Авиакомпания"
+        verbose_name="Фактический перевозчик"
     )
     departure = models.CharField(
         max_length=10,

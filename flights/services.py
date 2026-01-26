@@ -3,6 +3,12 @@ from asgiref.sync import sync_to_async
 from datetime import datetime, timedelta
 from playwright.async_api import async_playwright, Browser, Page, Playwright, Locator
 
+ROUTE_TYPES = [
+    ('one-way', 'one-way'),
+    ('return', 'roundtrip'),
+    ('multi-city', 'multi-city'),
+]
+
 
 class FlightParser:
     """Сервис для автоматизации поиска билетов на сайте ctb.business-class.com."""
@@ -14,8 +20,8 @@ class FlightParser:
     async def _get_browser(playwright: Playwright) -> Browser:
         """Инициализация браузера."""
         return await playwright.chromium.launch(
-            headless=False,
-            # headless=True,
+            # headless=False,
+            headless=True,
             # slow_mo=1000  # Замедляем на 1 сек, чтобы видеть каждое действие
         )
 
@@ -71,12 +77,12 @@ class FlightParser:
             # Считаем количество карточек билетов
             current_count = await page.locator(".ticket").count()
 
-            print(f"Загружено билетов: {current_count}")
+            # print(f"Загружено билетов: {current_count}")
 
             # 4. Логика выхода
             if current_count == last_count:
                 no_change_counter += 1
-                print(f"  -> Ничего не изменилось ({no_change_counter}/{max_retries})")
+                # print(f"  -> Ничего не изменилось ({no_change_counter}/{max_retries})")
 
                 if no_change_counter >= max_retries:
                     print(f"Скролл завершен. Всего найдено: {current_count}")
@@ -108,7 +114,7 @@ class FlightParser:
     def _clean_datetime(date_str: str, time_str: str):
         """Вспомогательная функция для сборки datetime объектов."""
         dt = datetime.strptime(f"{date_str.strip()} {time_str.strip()}", "%a, %b %d, %Y %I:%M %p")
-        return dt
+        return dt.strftime("%Y-%m-%d %H:%M")
 
     @staticmethod
     async def _wait_for_content(page: Page) -> bool:
@@ -141,7 +147,7 @@ class FlightParser:
             print(f"Ошибка при ожидании контента: {e}")
             return False
 
-    async def _extract_ticket_data(self, ticket: Locator, search_data: dict) -> list:
+    async def _extract_ticket_data(self, ticket: Locator, search_data: dict) -> dict:
         """Парсит одну карточку билета и возвращает список её сегментов."""
         try:
             # Открываем детали
@@ -150,50 +156,79 @@ class FlightParser:
             await details_box.wait_for(state="visible", timeout=2000)
 
             # Собираем общие для всей карточки данные
-            airline = await ticket.locator(".ticket__airlines-name").first.text_content()
+            validating_airline = await ticket.locator(".ticket__airlines-name").text_content()
+
+            ticket_uid_raw = await ticket.locator(".ticket-details__trip").inner_text()
+            ticket_uid = ticket_uid_raw.replace("Ticket ID", "").split("Share")[0].strip()
+
             price_text = await ticket.locator(".ticket__total-price span").first.text_content()
             price = float(price_text.replace("$", "").replace(",", "").strip())
 
-            ticket_id_raw = await ticket.locator(".ticket-details__trip").inner_text()
-            group_id = ticket_id_raw.replace("Ticket ID", "").split("Share")[0].strip()
-
             route_type = self._determine_trip_type(search_data['legs'])
 
-            # Парсим сегменты внутри этой карточки
-            segments = []
-            groups = ticket.locator(".ticket-details-group")
-            for j in range(await groups.count()):
-                segment_data = await self._parse_segment(groups.nth(j), price, airline, route_type, group_id)
-                segments.append(segment_data)
+            type_mapping = {
+                'one-way': 'one_way',
+                'return': 'roundtrip',
+                'multi-city': 'multi_city'
+            }
 
-            return segments
+            # Перебираем все полеты в карточке
+            segments = []
+            flights = await details_box.locator(".ticket-details-flight").all()
+
+            for index, flight_locator in enumerate(flights):
+                # Проверяем, не является ли этот блок просто плашкой "пересадка"
+                if await flight_locator.locator(".ticket-details-flight__wrap").count() > 0:
+                    segment_data = await self._parse_segment(flight_locator, index)
+                    segments.append(segment_data)
+            # groups = ticket.locator(".ticket-details-group")
+            # for j in range(await groups.count()):
+            #     segment_data = await self._parse_segment(groups.nth(j), order=j)
+            #     segments.append(segment_data)
+
+            return {
+                "validating_airline": validating_airline,
+                "ticket_uid": ticket_uid,
+                "price": price,
+                "route_type": type_mapping.get(route_type),
+                "segments": segments
+            }
 
         except Exception as e:
             print(f"Ошибка при парсинге карточки: {e}")
-            return []
+            return {}
 
-    async def _parse_segment(self, group: Locator, price: float, airline: str, route_type: str, group_id: str) -> dict:
+    async def _parse_segment(self, group: Locator, order: int) -> dict:
         """Извлекает данные конкретного перелета из группы деталей."""
-        # Извлекаем коды аэропортов (например, "(ORD)")
-        origin_raw = await group.locator(".ticket-details-flight__airport").first.text_content()
-        dest_raw = await group.locator(".ticket-details-flight__airport").last.text_content()
+
+        operating_airline_raw = await group.locator(".ticket-details-flight__airlines:not([class*='mobile']) b").text_content()
+        operating_airline = operating_airline_raw.strip().rsplit(' ', 1)
+
+        departure_raw = await group.locator(".ticket-details-flight__airport").first.text_content()
+        arrival_raw = await group.locator(".ticket-details-flight__airport").last.text_content()
 
         dep_time = await group.locator(".ticket-details-flight__time").first.text_content()
-        dep_date = await group.locator(".ticket-details-group__title-date").inner_text()
+        # dep_date = await group.locator(".ticket-details-group__title-date").inner_text()
+        dep_date = await group.locator(
+            "xpath=./ancestor::div[contains(@class, 'ticket-details-group')]//div[contains(@class, 'ticket-details-group__title-date')]"
+        ).first.inner_text()
 
         arr_time = await group.locator(".ticket-details-flight__time").last.text_content()
-        arr_summary = await group.locator(".ticket-details-group__summary-item:has-text('Arrives:')").inner_text()
-        arr_date = arr_summary.replace("Arrives:", "").strip()
+        # arr_summary = await group.locator(".ticket-details-group__summary-item:has-text('Arrives:')").inner_text()
+        # arr_date = arr_summary.replace("Arrives:", "").strip()
+        arr_date_raw = await group.locator(
+            "xpath=./ancestor::div[contains(@class, 'ticket-details-group')]//div[contains(@class, 'ticket-details-group__summary-item')][contains(., 'Arrives:')]"
+        ).first.inner_text()
+        arr_date = arr_date_raw.replace("Arrives:", "").strip()
+
 
         return {
-            "origin": origin_raw.strip()[-4:-1],
-            "destination": dest_raw.strip()[-4:-1],
+            "operating_airline": operating_airline[0],
+            "departure": departure_raw.strip()[-4:-1],
             "departure_date": self._clean_datetime(dep_date, dep_time),
+            "arrival": arrival_raw.strip()[-4:-1],
             "arrival_date": self._clean_datetime(arr_date, arr_time),
-            "price": price,
-            "airline": airline.strip(),
-            "route_type": route_type,
-            "group_id": group_id
+            "order": order,
         }
 
     def _construct_search_url(self, search_data: dict) -> str:
@@ -250,11 +285,11 @@ class FlightParser:
         print(f"Generated URL: {search_url}")
 
         # Инициализация сессии
-        print("Warming up session on homepage...")
+        print("Разогрев сессии на главной странице...")
         await page.goto(self.base_url, wait_until="domcontentloaded")
 
         # Переход по сгенерированному URL к результатам
-        print("Navigating to search results...")
+        print("Переход к результатам поиска...")
         await page.goto(search_url, wait_until="domcontentloaded")
 
         # Закрываем GDPR, чтобы он не перекрывал элементы
@@ -293,9 +328,12 @@ class FlightParser:
         results = []
 
         for i in range(count):
+            if (i + 1) % 10 == 0:
+                print(f"--- Обработано билетов: {i + 1} из {count} ---")
+
             ticket_data = await self._extract_ticket_data(tickets_locator.nth(i), search_data)
             if ticket_data:
-                results.extend(ticket_data)  # Добавляем список сегментов
+                results.append(ticket_data)  # Добавляем список сегментов
 
         return results
 
@@ -315,7 +353,7 @@ class FlightParser:
 
                 if len(flights_list) > 0:
                     # 3. Сохраняем в БД (это синхронная операция Django)
-                    await self._save_flights_to_db(flights_list)
+                    # await self._save_flights_to_db(flights_list)
 
                     print(f"Успешно собрано {len(flights_list)} рейсов.")
                     return flights_list
