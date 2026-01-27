@@ -200,7 +200,6 @@ class FlightParser:
             # Открываем детали
 
             details_box = ticket.locator(".ticket-details")
-            await details_box.wait_for(state="visible", timeout=2000)
 
             # Собираем общие для всей карточки данные
             validating_airline = await ticket.locator(".ticket__airlines-name").text_content()
@@ -363,92 +362,51 @@ class FlightParser:
         # Скроллим до упора
         await self._scroll_page(page)
 
-        while True:
-            print("Раскрываю все билеты...")
-            buttons = await page.locator(".ticket:not(.ticket--expanded) .ticket__preview").all()
-            print(f"Найдено карточек для раскрытия: {len(buttons)}")
+        print("Раскрываю все билеты...")
+        buttons = await page.locator(".ticket:not(.ticket--expanded) .ticket__preview").all()
+        print(f"Найдено билетов для раскрытия: {len(buttons)}")
 
-            # --------------------------------------------------------------------
-            untouched_tickets_count = await page.evaluate('''() => {
-                // Находим все ненажатые билеты
-                const untouchedTickets = Array.from(
-                    document.querySelectorAll('.ticket:not(.ticket--expanded)')
-                ).filter(ticket => {
-                    // Убедимся, что у билета нет скрытых деталей
-                    return !ticket.querySelector('.ticket-details, .ticket-details--hidden');
-                });
+        untouched_tickets_count = await page.evaluate('''() => {
+            // Находим все не нажатые билеты
+            const untouchedTickets = Array.from(
+                document.querySelectorAll('.ticket:not(.ticket--expanded)')
+            ).filter(ticket => {
+                // Убедимся, что у билета нет скрытых деталей
+                return !ticket.querySelector('.ticket-details, .ticket-details--hidden');
+            });
 
-                // Кликаем по кнопке раскрытия в каждом ненажатом билете
-                untouchedTickets.forEach(ticket => {
-                    const toggleButton = ticket.querySelector('[data-test-id="ticket-toggle-details"]');
-                    if (toggleButton) {
-                        toggleButton.click();
-                    }
-                });
+            // Кликаем по кнопке раскрытия в каждом ненажатом билете
+            untouchedTickets.forEach(ticket => {
+                const toggleButton = ticket.querySelector('[data-test-id="ticket-toggle-details"]');
+                if (toggleButton) {
+                    toggleButton.click();
+                }
+            });
 
-                // Возвращаем количество нажатых билетов (опционально)
-                return untouchedTickets.length;
-            }''')
+            // Возвращаем количество нажатых билетов (опционально)
+            return untouchedTickets.length;
+        }''')
 
-            print(f"Количество не нажатых билетов: {untouched_tickets_count}")
+        print(f"количество НАЖАТЫХ билетов: {untouched_tickets_count}")
 
-            # 2. Ожидаем, пока все билеты не раскроются
-            # Ожидание появления класса ticket--expanded у всех ранее ненажатых билетов
-            await page.wait_for_selector(
-                f'.ticket--expanded:nth-child({untouched_tickets_count})',
-                state="visible",
-                timeout=50000  # Таймаут в миллисекундах (50 секунд)
-            )
-            break
+        # Ожидание появления класса ticket--expanded у всех ранее не нажатых билетов
+        await page.wait_for_selector(
+            f'.ticket--expanded:nth-child({untouched_tickets_count})',
+            state="visible",
+            timeout=50000  # Таймаут в миллисекундах (50 секунд)
+        )
 
-            # --------------------------------------------------------------------
-            # Запускаем клики почти одновременно (небольшими пачками)
-            # Если нажать сразу 200 — браузер может «подвиснуть», поэтому жмем по 10 за раз
-
-            # reversed_buttons = buttons[::-1]
-            # chunk_size = 3
-            # for i in range(0, len(reversed_buttons), chunk_size):
-            #     chunk = reversed_buttons[i:i + chunk_size]
-            #     # Создаем список задач на клик для текущей пачки
-            #     tasks = [btn.click(force=True, no_wait_after=True, timeout=1000) for btn in chunk]
-            #     # Выполняем пачку кликов параллельно
-            #     await asyncio.gather(*tasks, return_exceptions=True)
-            #     # Крошечная пауза, чтобы анимация раскрытия началась
-            #     await asyncio.sleep(1)
-            #
-            # tickets_locator = await page.locator(".ticket:not(.ticket--placeholder)").all()
-            # print(f"{len(tickets_locator)} / {len(buttons)}")
-            #
-            # if len(buttons) == 0:
-            #     break
-
-        print("Все клики отправлены. Ожидаем отрисовку деталей...")
-
-        # Ждем, пока последний билет в списке станет раскрытым
-        # Если последний раскрылся — значит, браузер дошел до конца очереди
-        # try:
-        #     last_details = page.locator(".ticket:not(.ticket--placeholder)").last.locator(".ticket-details")
-        #     await last_details.wait_for(state="visible", timeout=10000)
-        #     print("Отрисовка завершена успешно.")
-        # except Exception as e:
-        #     print(f"Превышено время ожидания отрисовки: {e}. Пробую продолжать...")
-        #     await asyncio.sleep(2)  # Запасная пауза на всякий случай
+        print("Бсе билеты раскрыты...")
 
         # 3. Собираем локаторы всех билетов
         tickets_locator = page.locator(".ticket:not(.ticket--placeholder)")
         tickets = await tickets_locator.all()
         count = len(tickets)
         results = []
-        print(f"--- Найдено раскрытых карточек - {count} ---")
-
-        # print("--- HTML КОД ПЕРВОГО БИЛЕТА ---")
-        # html_content = await tickets_locator.first.evaluate("el => el.outerHTML")
-        # print(html_content)
-        #
-        # await page.wait_for_timeout(5000)
+        print(f"Бсе билеты раскрыты ({count}).")
 
         # 4. Параллельный сбор пачками (по 50 штук), чтобы не вешать браузер
-        chunk_size = 25
+        chunk_size = 10
         for i in range(0, count, chunk_size):
             chunk = tickets[i:i + chunk_size]
             tasks = [self._extract_ticket_data(t, search_data) for t in chunk]
