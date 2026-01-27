@@ -42,6 +42,8 @@ class FlightSearchView(APIView):
             # Пытаемся взять данные из Redis
             cached_data = cache.get(cache_key)
             if cached_data:
+                # Снимаем замок
+                cache.delete(lock_id)
                 return Response(cached_data, status=status.HTTP_200_OK)
 
             # Если в кэше пусто — здесь будет вызов нашего Playwright сервиса
