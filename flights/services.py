@@ -32,6 +32,19 @@ class FlightParser:
         )
 
     @staticmethod
+    async def _disable_animations(page):
+        """Отключает анимации на странице для стабильности автоматизации."""
+        await page.add_style_tag(content="""
+            *, *::before, *::after {
+                transition-duration: 0s !important;
+                transition-delay: 0s !important;
+                animation-duration: 0s !important;
+                animation-delay: 0s !important;
+                scroll-behavior: auto !important;
+            }
+        """)
+
+    @staticmethod
     def _determine_trip_type(legs: list) -> str:
         """Автоматически определяет тип поездки по количеству сегментов."""
         count = len(legs)
@@ -178,7 +191,7 @@ class FlightParser:
             # Ждем загрузки всех билетов ИЛИ блока "Nothing found"
             result = await page.wait_for_selector(
                 f"{final_status_selector}, {nothing_found_selector}",
-                timeout=30000
+                timeout=60000
             )
 
             # Проверяем, что именно сработало
@@ -194,23 +207,18 @@ class FlightParser:
             print(f"Ошибка при ожидании контента: {e}")
             return False
 
-
     @staticmethod
     @timeit
-    async def expand_all_tickets(page: Page) -> None:
-        """
-        Раскрывает всех ненажатых билетов на странице.
-        """
+    async def _expand_all_tickets(page: Page) -> None:
+        """Раскрывает всех ненажатых билетов на странице."""
         # Находим все ненажатые билеты
         untouched_tickets = await page.query_selector_all('.ticket:not(.ticket--expanded)')
-        untouched_tickets_count = len(untouched_tickets)
-        print(f"Ненажатых билетов: {untouched_tickets_count}")
 
-        if untouched_tickets_count == 0:
+        if len(untouched_tickets) == 0:
             print("Все билеты уже раскрыты.")
             return
 
-        untouched_tickets_count = await page.evaluate('''() => {
+        clicked_tickets_count = await page.evaluate('''() => {
             // Находим все не нажатые билеты
             const untouchedTickets = Array.from(
                 document.querySelectorAll('.ticket:not(.ticket--expanded)')
@@ -231,32 +239,16 @@ class FlightParser:
             return untouchedTickets.length;
         }''')
 
-        # Разбиваем на пачки по 20 билетов
-        # chunk_size = 20
-        # for i in range(0, len(untouched_tickets), chunk_size):
-        #     chunk = untouched_tickets[i:i + chunk_size]
-        #     await page.evaluate(
-        #         '''(tickets) => {
-        #             tickets.forEach(ticket => {
-        #                 const toggleButton = ticket.querySelector('[data-test-id="ticket-toggle-details"]');
-        #                 if (toggleButton) toggleButton.click();
-        #             });
-        #         }''',
-        #         chunk
-        #     )
-        #     # Ждём, пока билеты в текущей пачке раскроются
-        #     await asyncio.sleep(1)  # Задержка 1 секунда между пачками
-
         # Ожидание, пока все билеты раскроются
         await page.wait_for_function(
             f'''() => {{
                 const expandedTickets = document.querySelectorAll('.ticket--expanded');
-                return expandedTickets.length >= {untouched_tickets_count};
+                return expandedTickets.length >= {clicked_tickets_count};
             }}''',
             timeout=50000
         )
 
-        print(f"Раскрыто билетов: {untouched_tickets_count}")
+        print(f"Раскрыто билетов: {clicked_tickets_count}")
         return
 
     async def _extract_ticket_data(self, ticket: Locator, search_data: dict) -> dict:
@@ -334,6 +326,32 @@ class FlightParser:
             "order": order,
         }
 
+    @timeit
+    async def _process_chunks(self, items: list, search_data: dict, chunk_size: int = 10) -> list:
+        """Универсальный метод для параллельной обработки списка объектов пачками."""
+        all_results = []
+        total_count = len(items)
+
+        for i in range(0, total_count, chunk_size):
+            chunk = items[i:i + chunk_size]
+
+            # Создаем задачи для текущей пачки
+            tasks = [self._extract_ticket_data(item, search_data) for item in chunk]
+
+            # Выполняем пачку параллельно
+            chunk_results = await asyncio.gather(*tasks, return_exceptions=True)
+
+            # Собираем только валидные результаты
+            for res in chunk_results:
+                if isinstance(res, dict) and res:
+                    all_results.append(res)
+                elif isinstance(res, Exception):
+                    print(f"Ошибка при обработке объекта: {res}")
+
+            print(f"--- Обработано объектов: {len(all_results)} из {total_count} ---")
+
+        return all_results
+
     def _construct_search_url(self, search_data: dict) -> str:
         """Генерации URL."""
         legs = search_data['legs']
@@ -410,16 +428,6 @@ class FlightParser:
     async def _parse_results(self, page: Page, search_data: dict) -> list:
         """Главный метод управления парсингом."""
 
-        # Отключаем анимации, чтобы все раскрывалось мгновенно
-        await page.add_style_tag(content="""
-                *, *::before, *::after {
-                    transition-duration: 0s !important;
-                    transition-delay: 0s !important;
-                    animation-duration: 0s !important;
-                    animation-delay: 0s !important;
-                }
-            """)
-
         # Ждем контент
         if not await self._wait_for_content(page):
             return []
@@ -428,34 +436,22 @@ class FlightParser:
         await self._scroll_page(page)
 
         # Раскрываем все билеты с помощью статического метода
-        await self.expand_all_tickets(page)
-
-        print("Бсе билеты раскрыты...")
+        await self._expand_all_tickets(page)
 
         # 3. Собираем локаторы всех билетов
         tickets_locator = page.locator(".ticket:not(.ticket--placeholder)")
         tickets = await tickets_locator.all()
-        count = len(tickets)
-        results = []
-        print(f"Бсе билеты раскрыты ({count}).")
 
-        # 4. Параллельный сбор пачками (по 50 штук), чтобы не вешать браузер
-        # chunk_size = 10
-        # for i in range(0, count, chunk_size):
-        #     chunk = tickets[i:i + chunk_size]
-        #     tasks = [self._extract_ticket_data(t, search_data) for t in chunk]
-        #
-        #     # Запускаем пачку параллельно
-        #     chunk_results = await asyncio.gather(*tasks, return_exceptions=True)
-        #
-        #     # Фильтруем успешные ответы
-        #     for res in chunk_results:
-        #         if isinstance(res, dict) and res:
-        #             results.append(res)
-        #
-        #     print(f"--- Обработано билетов: {len(results)} из {count} ---")
-        #
-        # return results
+        if not tickets:
+            print("Билеты не найдены.")
+            return []
+
+        print(f"Все билеты найдены и раскрыты ({len(tickets)}).")
+
+        # Обработка данных
+        results = await self._process_chunks(tickets, search_data, chunk_size=10)
+
+        return results
 
     async def run(self, search_data: dict):
         """Точка входа для запуска процесса парсинга."""
@@ -463,6 +459,9 @@ class FlightParser:
             browser = await self._get_browser(playwright)
             context = await browser.new_context()
             page = await context.new_page()
+
+            # Отключаем анимации
+            await self._disable_animations(page)
 
             try:
                 # Инициализируем сессию через главную страницу и переходим по прямому URL к результатам
