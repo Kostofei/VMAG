@@ -23,3 +23,38 @@ class FlightSearchSerializer(serializers.Serializer):
         ],
         default='C'
     )
+
+
+from rest_framework import serializers
+from users.models import User
+
+
+class UserSerializer(serializers.ModelSerializer):
+    """Сериализатор для модели User."""
+    password = serializers.CharField(
+        write_only=True,
+        required=True,
+        style={'input_type': 'password'},
+        help_text="Пароль пользователя. Не отображается в ответах API."
+    )
+
+    class Meta:
+        model = User
+        fields = ('id', 'username', 'email', 'password')
+
+    def create(self, validated_data):
+        """Создает нового пользователя с захешированным паролем."""
+        user = User.objects.create_user(
+            username=validated_data['username'],
+            email=validated_data.get('email', ''),
+            password=validated_data['password']
+        )
+        return user
+
+    def update(self, instance, validated_data):
+        """Обновляет данные существующего пользователя."""
+        password = validated_data.pop('password', None)
+        if password:
+            instance.set_password(password)
+
+        return super().update(instance, validated_data)
