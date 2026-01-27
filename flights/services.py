@@ -1,3 +1,4 @@
+import copy
 from decimal import Decimal
 
 from django.db import transaction
@@ -100,6 +101,7 @@ class FlightParser:
     @sync_to_async
     def _save_flights_to_db(flights_data: list) -> None:
         """Сохранение билетов и сегментов согласно структуре моделей Django."""
+
         if not flights_data:
             print("Нет данных для сохранения.")
             return
@@ -107,10 +109,11 @@ class FlightParser:
         from .models import Ticket, FlightSegment
 
         tickets_processed = 0
+        flights_data_copy = copy.deepcopy(flights_data)
 
         try:
             with transaction.atomic():
-                for ticket_dict in flights_data:
+                for ticket_dict in flights_data_copy:
 
                     segments_list = ticket_dict.pop('segments', [])
 
@@ -219,15 +222,17 @@ class FlightParser:
             segments = []
             flights = await details_box.locator(".ticket-details-flight").all()
 
-            for index, flight_locator in enumerate(flights):
-                # Проверяем, не является ли этот блок просто плашкой "пересадка"
-                if await flight_locator.locator(".ticket-details-flight__wrap").count() > 0:
-                    segment_data = await self._parse_segment(flight_locator, index)
+            if len(flights) > 0:
+                for index, flight_locator in enumerate(flights):
+                    # Проверяем, не является ли этот блок просто плашкой "пересадка"
+                    if await flight_locator.locator(".ticket-details-flight__wrap").count() > 0:
+                        segment_data = await self._parse_segment_flight(flight_locator, order=index)
+                        segments.append(segment_data)
+            else:
+                groups = ticket.locator(".ticket-details-group")
+                for j in range(await groups.count()):
+                    segment_data = await self._parse_segment_group(groups.nth(j), order=j)
                     segments.append(segment_data)
-            # groups = ticket.locator(".ticket-details-group")
-            # for j in range(await groups.count()):
-            #     segment_data = await self._parse_segment(groups.nth(j), order=j)
-            #     segments.append(segment_data)
 
             return {
                 "validating_airline": validating_airline,
@@ -241,7 +246,7 @@ class FlightParser:
             print(f"Ошибка при парсинге карточки: {e}")
             return {}
 
-    async def _parse_segment(self, group: Locator, order: int) -> dict:
+    async def _parse_segment_group(self, group: Locator, order: int) -> dict:
         """Извлекает данные конкретного перелета из группы деталей."""
 
         operating_airline_raw = await group.locator(".ticket-details-flight__airlines:not([class*='mobile']) b").text_content()
@@ -260,6 +265,36 @@ class FlightParser:
         # arr_summary = await group.locator(".ticket-details-group__summary-item:has-text('Arrives:')").inner_text()
         # arr_date = arr_summary.replace("Arrives:", "").strip()
         arr_date_raw = await group.locator(
+            "xpath=./ancestor::div[contains(@class, 'ticket-details-group')]//div[contains(@class, 'ticket-details-group__summary-item')][contains(., 'Arrives:')]"
+        ).first.inner_text()
+        arr_date = arr_date_raw.replace("Arrives:", "").strip()
+
+
+        return {
+            "operating_airline": operating_airline[0],
+            "departure": departure_raw.strip()[-4:-1],
+            "departure_date": self._clean_datetime(dep_date, dep_time),
+            "arrival": arrival_raw.strip()[-4:-1],
+            "arrival_date": self._clean_datetime(arr_date, arr_time),
+            "order": order,
+        }
+
+    async def _parse_segment_flight(self, flight: Locator, order: int) -> dict:
+        """Извлекает данные конкретного перелета из группы деталей."""
+
+        operating_airline_raw = await flight.locator(".ticket-details-flight__airlines:not([class*='mobile']) b").text_content()
+        operating_airline = operating_airline_raw.strip().rsplit(' ', 1)
+
+        departure_raw = await flight.locator(".ticket-details-flight__airport").first.text_content()
+        arrival_raw = await flight.locator(".ticket-details-flight__airport").last.text_content()
+
+        dep_time = await flight.locator(".ticket-details-flight__time").first.text_content()
+        dep_date = await flight.locator(
+            "xpath=./ancestor::div[contains(@class, 'ticket-details-group')]//div[contains(@class, 'ticket-details-group__title-date')]"
+        ).first.inner_text()
+
+        arr_time = await flight.locator(".ticket-details-flight__time").last.text_content()
+        arr_date_raw = await flight.locator(
             "xpath=./ancestor::div[contains(@class, 'ticket-details-group')]//div[contains(@class, 'ticket-details-group__summary-item')][contains(., 'Arrives:')]"
         ).first.inner_text()
         arr_date = arr_date_raw.replace("Arrives:", "").strip()
@@ -370,7 +405,7 @@ class FlightParser:
         count = await tickets_locator.count()
         results = []
 
-        for i in range(count):
+        for i in range(10):
             if (i + 1) % 10 == 0:
                 print(f"--- Обработано билетов: {i + 1} из {count} ---")
 
