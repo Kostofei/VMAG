@@ -26,9 +26,7 @@ class FlightParser:
     async def _get_browser(playwright: Playwright) -> Browser:
         """Инициализация браузера."""
         return await playwright.chromium.launch(
-            headless=False,
-            # headless=True,
-            # slow_mo=1000  # Замедляем на 1 сек, чтобы видеть каждое действие
+            headless=True,
         )
 
     @staticmethod
@@ -165,7 +163,7 @@ class FlightParser:
 
                     tickets_processed += 1
 
-            print(f"Успешно обработано {tickets_processed} билетов в базе данных.")
+            # print(f"Успешно обработано {tickets_processed} билетов в базе данных.")
 
         except Exception as e:
             print(f"Критическая ошибка при сохранении в БД: {e}")
@@ -197,7 +195,7 @@ class FlightParser:
             # Проверяем, что именно сработало
             content = await result.inner_text()
             if "best deals" in content:
-                print("Успех: Все билеты загружены.")
+                print("Все билеты загружены.")
                 return True
             else:
                 print("Инфо: Рейсов не найдено.")
@@ -211,6 +209,7 @@ class FlightParser:
     @timeit
     async def _expand_all_tickets(page: Page) -> None:
         """Раскрывает всех ненажатых билетов на странице."""
+        print("Начинаем раскрывать билеты")
         # Находим все ненажатые билеты
         untouched_tickets = await page.query_selector_all('.ticket:not(.ticket--expanded)')
 
@@ -388,7 +387,7 @@ class FlightParser:
                 elif isinstance(res, Exception):
                     print(f"Ошибка при обработке объекта: {res}")
 
-            print(f"--- Обработано объектов: {len(all_results)} из {total_count} ---")
+            # print(f"--- Обработано объектов: {len(all_results)} из {total_count} ---")
 
         return all_results
 
@@ -443,7 +442,7 @@ class FlightParser:
 
         # Генерируем URL
         search_url = self._construct_search_url(search_data)
-        print(f"Generated URL: {search_url}")
+        print(f"URL: {search_url}")
 
         # Инициализация сессии
         print("Разогрев сессии на главной странице...")
@@ -514,7 +513,7 @@ class FlightParser:
                     # Сохраняем в БД (это синхронная операция Django)
                     await self._save_flights_to_db(flights_list)
 
-                    print(f"Успешно собрано {len(flights_list)} рейсов.")
+                    print(f"Успешно сохранено {len(flights_list)} рейсов.")
                     return flights_list
 
                 return "No flights found matching your search"

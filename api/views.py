@@ -34,8 +34,6 @@ class FlightSearchView(APIView):
         if serializer.is_valid():
             search_data = serializer.validated_data
 
-            print(search_data)
-
             # Генерируем уникальный ключ для кэша на основе параметров поиска
             cache_key = self._generate_cache_key(search_data)
 
@@ -52,7 +50,7 @@ class FlightSearchView(APIView):
             found_flights = async_to_sync(parser.run)(search_data)
 
             # Сохраняем результат в кэш на 30 минут
-            # cache.set(cache_key, found_flights, timeout=60 * 30)
+            cache.set(cache_key, found_flights, timeout=60 * 30)
 
             # Снимаем замок
             cache.delete(lock_id)
