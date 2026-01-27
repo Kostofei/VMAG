@@ -5,6 +5,7 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 from asgiref.sync import async_to_sync
+from drf_spectacular.utils import extend_schema
 
 from flights.services import FlightParser
 from .serializers import FlightSearchSerializer
@@ -16,6 +17,11 @@ class FlightSearchView(APIView):
     Сначала проверяет кэш Redis, если данных нет — запускает парсинг.
     """
 
+    @extend_schema(
+        request=FlightSearchSerializer,  # Это добавит поле ввода JSON
+        responses={200: FlightSearchSerializer(many=True)},  # Опционально: что вернет
+        description="Эндпоинт для поиска авиабилетов..."
+    )
     def post(self, request):
         serializer = FlightSearchSerializer(data=request.data)
 
