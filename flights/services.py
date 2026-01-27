@@ -194,6 +194,71 @@ class FlightParser:
             print(f"Ошибка при ожидании контента: {e}")
             return False
 
+
+    @staticmethod
+    @timeit
+    async def expand_all_tickets(page: Page) -> None:
+        """
+        Раскрывает всех ненажатых билетов на странице.
+        """
+        # Находим все ненажатые билеты
+        untouched_tickets = await page.query_selector_all('.ticket:not(.ticket--expanded)')
+        untouched_tickets_count = len(untouched_tickets)
+        print(f"Ненажатых билетов: {untouched_tickets_count}")
+
+        if untouched_tickets_count == 0:
+            print("Все билеты уже раскрыты.")
+            return
+
+        untouched_tickets_count = await page.evaluate('''() => {
+            // Находим все не нажатые билеты
+            const untouchedTickets = Array.from(
+                document.querySelectorAll('.ticket:not(.ticket--expanded)')
+            ).filter(ticket => {
+                // Убедимся, что у билета нет скрытых деталей
+                return !ticket.querySelector('.ticket-details, .ticket-details--hidden');
+            });
+
+            // Кликаем по кнопке раскрытия в каждом ненажатом билете
+            untouchedTickets.forEach(ticket => {
+                const toggleButton = ticket.querySelector('[data-test-id="ticket-toggle-details"]');
+                if (toggleButton) {
+                    toggleButton.click();
+                }
+            });
+
+            // Возвращаем количество нажатых билетов (опционально)
+            return untouchedTickets.length;
+        }''')
+
+        # Разбиваем на пачки по 20 билетов
+        # chunk_size = 20
+        # for i in range(0, len(untouched_tickets), chunk_size):
+        #     chunk = untouched_tickets[i:i + chunk_size]
+        #     await page.evaluate(
+        #         '''(tickets) => {
+        #             tickets.forEach(ticket => {
+        #                 const toggleButton = ticket.querySelector('[data-test-id="ticket-toggle-details"]');
+        #                 if (toggleButton) toggleButton.click();
+        #             });
+        #         }''',
+        #         chunk
+        #     )
+        #     # Ждём, пока билеты в текущей пачке раскроются
+        #     await asyncio.sleep(1)  # Задержка 1 секунда между пачками
+
+        # Ожидание, пока все билеты раскроются
+        await page.wait_for_function(
+            f'''() => {{
+                const expandedTickets = document.querySelectorAll('.ticket--expanded');
+                return expandedTickets.length >= {untouched_tickets_count};
+            }}''',
+            timeout=50000
+        )
+
+        print(f"Раскрыто билетов: {untouched_tickets_count}")
+        return
+
     async def _extract_ticket_data(self, ticket: Locator, search_data: dict) -> dict:
         """Парсит одну карточку билета и возвращает список её сегментов."""
         try:
@@ -362,39 +427,8 @@ class FlightParser:
         # Скроллим до упора
         await self._scroll_page(page)
 
-        print("Раскрываю все билеты...")
-        buttons = await page.locator(".ticket:not(.ticket--expanded) .ticket__preview").all()
-        print(f"Найдено билетов для раскрытия: {len(buttons)}")
-
-        untouched_tickets_count = await page.evaluate('''() => {
-            // Находим все не нажатые билеты
-            const untouchedTickets = Array.from(
-                document.querySelectorAll('.ticket:not(.ticket--expanded)')
-            ).filter(ticket => {
-                // Убедимся, что у билета нет скрытых деталей
-                return !ticket.querySelector('.ticket-details, .ticket-details--hidden');
-            });
-
-            // Кликаем по кнопке раскрытия в каждом ненажатом билете
-            untouchedTickets.forEach(ticket => {
-                const toggleButton = ticket.querySelector('[data-test-id="ticket-toggle-details"]');
-                if (toggleButton) {
-                    toggleButton.click();
-                }
-            });
-
-            // Возвращаем количество нажатых билетов (опционально)
-            return untouchedTickets.length;
-        }''')
-
-        print(f"количество НАЖАТЫХ билетов: {untouched_tickets_count}")
-
-        # Ожидание появления класса ticket--expanded у всех ранее не нажатых билетов
-        await page.wait_for_selector(
-            f'.ticket--expanded:nth-child({untouched_tickets_count})',
-            state="visible",
-            timeout=50000  # Таймаут в миллисекундах (50 секунд)
-        )
+        # Раскрываем все билеты с помощью статического метода
+        await self.expand_all_tickets(page)
 
         print("Бсе билеты раскрыты...")
 
@@ -406,22 +440,22 @@ class FlightParser:
         print(f"Бсе билеты раскрыты ({count}).")
 
         # 4. Параллельный сбор пачками (по 50 штук), чтобы не вешать браузер
-        chunk_size = 10
-        for i in range(0, count, chunk_size):
-            chunk = tickets[i:i + chunk_size]
-            tasks = [self._extract_ticket_data(t, search_data) for t in chunk]
-
-            # Запускаем пачку параллельно
-            chunk_results = await asyncio.gather(*tasks, return_exceptions=True)
-
-            # Фильтруем успешные ответы
-            for res in chunk_results:
-                if isinstance(res, dict) and res:
-                    results.append(res)
-
-            print(f"--- Обработано билетов: {len(results)} из {count} ---")
-
-        return results
+        # chunk_size = 10
+        # for i in range(0, count, chunk_size):
+        #     chunk = tickets[i:i + chunk_size]
+        #     tasks = [self._extract_ticket_data(t, search_data) for t in chunk]
+        #
+        #     # Запускаем пачку параллельно
+        #     chunk_results = await asyncio.gather(*tasks, return_exceptions=True)
+        #
+        #     # Фильтруем успешные ответы
+        #     for res in chunk_results:
+        #         if isinstance(res, dict) and res:
+        #             results.append(res)
+        #
+        #     print(f"--- Обработано билетов: {len(results)} из {count} ---")
+        #
+        # return results
 
     async def run(self, search_data: dict):
         """Точка входа для запуска процесса парсинга."""
