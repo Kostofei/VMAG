@@ -252,78 +252,118 @@ class FlightParser:
         return
 
     async def _extract_ticket_data(self, ticket: Locator, search_data: dict) -> dict:
-        """Парсит одну карточку билета и возвращает список её сегментов."""
         try:
-            # Открываем детали
+            # 1. Забираем данные из браузера одним куском (JS)
+            raw = await ticket.evaluate("""
+                                        (ticketEl) => {
+                                            const groups = Array.from(ticketEl.querySelectorAll(".ticket-details-group"));
+                                            const segments = [];
 
-            details_box = ticket.locator(".ticket-details")
+                                            groups.forEach(group => {
+                                                // Берем чистую дату из заголовка группы
+                                                const groupDate = group.querySelector(".ticket-details-group__title-date")?.innerText?.trim() || "";
 
-            # Собираем общие для всей карточки данные
-            validating_airline = await ticket.locator(".ticket__airlines-name").text_content()
-            ticket_uid_raw = await ticket.locator(".ticket-details__trip").inner_text()
-            ticket_uid = ticket_uid_raw.replace("Ticket ID", "").split("Share")[0].strip()
+                                                // Ищем строку прибытия, которая НЕ содержит 'Duration'
+                                                const summaryItems = Array.from(group.querySelectorAll(".ticket-details-group__summary-item"));
+                                                const arrivalLine = summaryItems.find(el => el.innerText.includes("Arrives:"))?.innerText || "";
 
-            price_text = await ticket.locator(".ticket__total-price span").first.text_content()
-            price = float(price_text.replace("$", "").replace(",", "").strip())
+                                                const flights = Array.from(group.querySelectorAll(".ticket-details-flight"));
+                                                flights.forEach((f) => {
+                                                    if (!f.querySelector(".ticket-details-flight__wrap")) return;
 
-            route_type = self._determine_trip_type(search_data['legs'])
+                                                    const times = Array.from(f.querySelectorAll(".ticket-details-flight__time"));
+                                                    const airports = Array.from(f.querySelectorAll(".ticket-details-flight__airport"));
 
-            type_mapping = {
-                'one-way': 'one_way',
-                'return': 'roundtrip',
-                'multi-city': 'multi_city'
-            }
+                                                    segments.push({
+                                                        airline: f.querySelector(".ticket-details-flight__airlines b")?.innerText?.trim() || "",
+                                                        dep_iata: airports[0]?.innerText?.trim() || "",
+                                                        arr_iata: airports[airports.length - 1]?.innerText?.trim() || "",
+                                                        dep_time: times[0]?.innerText?.trim() || "",
+                                                        arr_time: times[times.length - 1]?.innerText?.trim() || "",
+                                                        dep_date: groupDate,
+                                                        arr_date_raw: arrivalLine, // Передаем как есть, почистим в Python
+                                                    });
+                                                });
+                                            });
 
-            # Перебираем все полеты в карточке
-            segments = []
-            flights = await details_box.locator(".ticket-details-flight").all()
+                                            return {
+                                                airline: ticketEl.querySelector(".ticket__airlines-name")?.innerText?.trim() || "",
+                                                uid: ticketEl.querySelector(".ticket-details__trip")?.innerText?.trim() || "",
+                                                price: ticketEl.querySelector(".ticket__total-price span")?.innerText?.trim() || "",
+                                                segments: segments
+                                            };
+                                        }
+                                        """)
 
-            for index, flight_locator in enumerate(flights):
-                # Проверяем, не является ли этот блок просто плашкой "пересадка"
-                if await flight_locator.locator(".ticket-details-flight__wrap").count() > 0:
-                    segment_data = await self._parse_segment(flight_locator, order=index)
-                    segments.append(segment_data)
+            # 2. Подготовка данных для вашей функции _clean_datetime
+            processed_segments = []
+            for idx, s in enumerate(raw['segments']):
+
+                # ЗАЩИТА: Очистка от "Arrives:" и "Duration"
+                # Если пришло "Arrives: Wed, Oct 15, 2025 Duration: 02h...",
+                # забираем только то, что между "Arrives:" и "Duration"
+
+                arr_date_val = s['arr_date_raw'].replace("Arrives:", "")
+                if "Duration" in arr_date_val:
+                    arr_date_val = arr_date_val.split("Duration")[0]
+
+                arr_date_val = arr_date_val.strip()
+
+                # Теперь вызываем вашу функцию в исходном виде
+                try:
+                    dep_dt = self._clean_datetime(s['dep_date'], s['dep_time'])
+                    arr_dt = self._clean_datetime(arr_date_val, s['arr_time'])
+                except Exception as e:
+                    print(f"Ошибка формата даты в сегменте {idx}: {e} (Data: {arr_date_val})")
+                    continue
+
+                processed_segments.append({
+                    "operating_airline": s['airline'].rsplit(' ', 1)[0],
+                    "departure": s['dep_iata'][-4:-1],
+                    "departure_date": dep_dt,
+                    "arrival": s['arr_iata'][-4:-1],
+                    "arrival_date": arr_dt,
+                    "order": idx,
+                })
 
             return {
-                "validating_airline": validating_airline,
-                "ticket_uid": ticket_uid,
-                "price": price,
-                "route_type": type_mapping.get(route_type),
-                "segments": segments
+                "validating_airline": raw['airline'],
+                "ticket_uid": raw['uid'].replace("Ticket ID", "").split("Share")[0].strip(),
+                "price": float(raw['price'].replace("$", "").replace(",", "").strip()),
+                "route_type": self._determine_trip_type(search_data['legs']),
+                "segments": processed_segments
             }
 
         except Exception as e:
             print(f"Ошибка при парсинге карточки: {e}")
             return {}
 
-    async def _parse_segment(self, flight: Locator, order: int) -> dict:
-        """Извлекает данные конкретного перелета из группы деталей."""
+    def _process_segment_data(self, raw_seg: dict) -> dict:
+        """
+        Теперь это синхронный метод.
+        Он просто чистит данные, полученные из JS, не обращаясь к браузеру.
+        """
+        # 1. Чистим авиакомпанию
+        op_airline = raw_seg['operating_airline_raw'].strip().rsplit(' ', 1)[0]
 
-        operating_airline_raw = await flight.locator(
-            ".ticket-details-flight__airlines:not([class*='mobile']) b").text_content()
-        operating_airline = operating_airline_raw.strip().rsplit(' ', 1)
+        # 2. Извлекаем IATA коды (ваша логика [-4:-1])
+        dep_iata = raw_seg['departure_raw'].strip()[-4:-1]
+        arr_iata = raw_seg['arrival_raw'].strip()[-4:-1]
 
-        departure_raw = await flight.locator(".ticket-details-flight__airport").first.text_content()
-        arrival_raw = await flight.locator(".ticket-details-flight__airport").last.text_content()
+        # 3. Форматируем даты (самая тяжелая часть, остается в Python)
+        # Используем данные, которые JS уже нашел через .closest() или parent
+        departure_date = self._clean_datetime(raw_seg['dep_date'], raw_seg['dep_time'])
 
-        dep_time = await flight.locator(".ticket-details-flight__time").first.text_content()
-        dep_date = await flight.locator(
-            "xpath=./ancestor::div[contains(@class, 'ticket-details-group')]//div[contains(@class, 'ticket-details-group__title-date')]"
-        ).first.inner_text()
-
-        arr_time = await flight.locator(".ticket-details-flight__time").last.text_content()
-        arr_date_raw = await flight.locator(
-            "xpath=./ancestor::div[contains(@class, 'ticket-details-group')]//div[contains(@class, 'ticket-details-group__summary-item')][contains(., 'Arrives:')]"
-        ).first.inner_text()
-        arr_date = arr_date_raw.replace("Arrives:", "").strip()
+        arr_date_clean = raw_seg['arr_date_raw'].replace("Arrives:", "").strip()
+        arrival_date = self._clean_datetime(arr_date_clean, raw_seg['arr_time'])
 
         return {
-            "operating_airline": operating_airline[0],
-            "departure": departure_raw.strip()[-4:-1],
-            "departure_date": self._clean_datetime(dep_date, dep_time),
-            "arrival": arrival_raw.strip()[-4:-1],
-            "arrival_date": self._clean_datetime(arr_date, arr_time),
-            "order": order,
+            "operating_airline": op_airline,
+            "departure": dep_iata,
+            "departure_date": departure_date,
+            "arrival": arr_iata,
+            "arrival_date": arrival_date,
+            "order": raw_seg['order'],
         }
 
     @timeit
@@ -449,7 +489,7 @@ class FlightParser:
         print(f"Все билеты найдены и раскрыты ({len(tickets)}).")
 
         # Обработка данных
-        results = await self._process_chunks(tickets, search_data, chunk_size=10)
+        results = await self._process_chunks(tickets, search_data, chunk_size=25)
 
         return results
 
