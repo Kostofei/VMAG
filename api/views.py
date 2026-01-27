@@ -52,7 +52,7 @@ class FlightSearchView(APIView):
             found_flights = async_to_sync(parser.run)(search_data)
 
             # Сохраняем результат в кэш на 30 минут
-            cache.set(cache_key, found_flights, timeout=60 * 30)
+            # cache.set(cache_key, found_flights, timeout=60 * 30)
 
             # Снимаем замок
             cache.delete(lock_id)
