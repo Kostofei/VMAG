@@ -484,6 +484,7 @@ class FlightParser:
 
         return results
 
+    @timeit
     async def run(self, search_data: dict):
         """Точка входа для запуска процесса парсинга."""
         async with async_playwright() as playwright:
