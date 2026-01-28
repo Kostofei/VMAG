@@ -68,12 +68,17 @@ class FlightSearchView(APIView):
             found_flights = async_to_sync(parser.run)(search_data)
 
             # Сохраняем результат в кэш на 30 минут
-            cache.set(cache_key, found_flights, timeout=60 * 30)
+            if isinstance(found_flights, list) or found_flights == "No flights found matching your search":
+                cache.set(cache_key, found_flights, timeout=60 * 30)
+                status_code = status.HTTP_200_OK
+            else:
+                status_code = status.HTTP_400_BAD_REQUEST
+                found_flights = {"detail": found_flights}
 
             # Снимаем замок
             cache.delete(lock_id)
 
-            return Response(found_flights, status=status.HTTP_200_OK)
+            return Response(found_flights, status=status_code)
 
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 

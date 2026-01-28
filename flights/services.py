@@ -244,7 +244,7 @@ class FlightParser:
                 const expandedTickets = document.querySelectorAll('.ticket--expanded');
                 return expandedTickets.length >= {clicked_tickets_count};
             }}''',
-            timeout=50000
+            timeout=60000
         )
 
         print(f"Раскрыто билетов: {clicked_tickets_count}")
