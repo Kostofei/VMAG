@@ -41,6 +41,7 @@ services:
     ports:
       - "8000:8000"
     environment:
+      - PYTHONUNBUFFERED=1
       - DB_NAME=vmag
       - DB_USERNAME=vmag_admin
       - DB_PASSWORD=admin

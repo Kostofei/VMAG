@@ -39,6 +39,7 @@ class UserSerializer(serializers.ModelSerializer):
         model = User
         fields = ('id', 'username', 'email', 'password')
 
+
     def create(self, validated_data):
         """Создает нового пользователя с захешированным паролем."""
         user = User.objects.create_user(

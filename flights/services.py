@@ -17,7 +17,7 @@ ROUTE_TYPES = [
 
 
 class FlightParser:
-    """Сервис для автоматизации поиска билетов на сайте ctb.business-class.com."""
+    """Сервис для автоматизации поиска билетов."""
 
     def __init__(self):
         self.base_url = "https://ctb.business-class.com"
@@ -252,7 +252,7 @@ class FlightParser:
 
     async def _extract_ticket_data(self, ticket: Locator, search_data: dict) -> dict:
         try:
-            # 1. Забираем данные из браузера одним куском (JS)
+            # Забираем данные из браузера одним куском (JS)
             raw = await ticket.evaluate("""
                                         (ticketEl) => {
                                             const groups = Array.from(ticketEl.querySelectorAll(".ticket-details-group"));
@@ -280,7 +280,7 @@ class FlightParser:
                                                         dep_time: times[0]?.innerText?.trim() || "",
                                                         arr_time: times[times.length - 1]?.innerText?.trim() || "",
                                                         dep_date: groupDate,
-                                                        arr_date_raw: arrivalLine, // Передаем как есть, почистим в Python
+                                                        arr_date_raw: arrivalLine,
                                                     });
                                                 });
                                             });
@@ -294,21 +294,17 @@ class FlightParser:
                                         }
                                         """)
 
-            # 2. Подготовка данных для вашей функции _clean_datetime
+            # Подготовка данных для функции _clean_datetime
             processed_segments = []
             for idx, s in enumerate(raw['segments']):
 
-                # ЗАЩИТА: Очистка от "Arrives:" и "Duration"
-                # Если пришло "Arrives: Wed, Oct 15, 2025 Duration: 02h...",
-                # забираем только то, что между "Arrives:" и "Duration"
-
+                # Очистка от "Arrives:" и "Duration"
                 arr_date_val = s['arr_date_raw'].replace("Arrives:", "")
                 if "Duration" in arr_date_val:
                     arr_date_val = arr_date_val.split("Duration")[0]
 
                 arr_date_val = arr_date_val.strip()
 
-                # Теперь вызываем вашу функцию в исходном виде
                 try:
                     dep_dt = self._clean_datetime(s['dep_date'], s['dep_time'])
                     arr_dt = self._clean_datetime(arr_date_val, s['arr_time'])
@@ -338,19 +334,15 @@ class FlightParser:
             return {}
 
     def _process_segment_data(self, raw_seg: dict) -> dict:
-        """
-        Теперь это синхронный метод.
-        Он просто чистит данные, полученные из JS, не обращаясь к браузеру.
-        """
-        # 1. Чистим авиакомпанию
+        """Чистим данные, полученные из JS."""
+        # Чистим авиакомпанию
         op_airline = raw_seg['operating_airline_raw'].strip().rsplit(' ', 1)[0]
 
-        # 2. Извлекаем IATA коды (ваша логика [-4:-1])
+        # Извлекаем IATA коды
         dep_iata = raw_seg['departure_raw'].strip()[-4:-1]
         arr_iata = raw_seg['arrival_raw'].strip()[-4:-1]
 
-        # 3. Форматируем даты (самая тяжелая часть, остается в Python)
-        # Используем данные, которые JS уже нашел через .closest() или parent
+        # Форматируем даты
         departure_date = self._clean_datetime(raw_seg['dep_date'], raw_seg['dep_time'])
 
         arr_date_clean = raw_seg['arr_date_raw'].replace("Arrives:", "").strip()

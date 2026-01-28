@@ -173,6 +173,9 @@ SPECTACULAR_SETTINGS = {
             }
         }
     },
+    'POSTPROCESSING_HOOKS': [
+            'config.schema_hooks.custom_postprocessing_hook',
+        ],
 }
 
 AUTH_USER_MODEL = 'users.User'

@@ -12,6 +12,9 @@ from .serializers import FlightSearchSerializer, UserSerializer
 from flights.services import FlightParser
 from users.models import User
 
+USER_CACHE_KEY = "users_list_cache"
+
+
 @extend_schema(tags=['flights'])
 class FlightSearchView(APIView):
     """
@@ -28,9 +31,16 @@ class FlightSearchView(APIView):
         serializer = FlightSearchSerializer(data=request.data)
 
         # Создаем уникальный ключ для замка.
-        lock_id = f"lock_{request.user.id}"
+        if not request.user.is_authenticated:
+            if not request.session.session_key:
+                request.session.create()
 
-        # Пытаемся установить замок на 60 секунд (время жизни ключа)
+            session_key = request.session.session_key
+            lock_id = f"lock_guest_{session_key}"
+        else:
+            lock_id = f"lock_{request.user.id}"
+
+        # Пытаемся установить замок на 60 секунд
         is_locked = not cache.add(lock_id, "true", timeout=60)
 
         if is_locked:
@@ -74,16 +84,6 @@ class FlightSearchView(APIView):
         return f"flights_search_{hashlib.md5(encoded_data).hexdigest()}"
 
 
-@extend_schema(
-    parameters=[
-        OpenApiParameter(
-            name='id',
-            type=int,
-            location=OpenApiParameter.PATH,
-            description='Уникальный идентификатор пользователя (ID)'
-        ),
-    ]
-)
 @extend_schema(tags=['users'])
 class UserViewSet(viewsets.ModelViewSet):
     """
@@ -126,7 +126,7 @@ class UserViewSet(viewsets.ModelViewSet):
         Сначала проверяется наличие данных в кеше. Если данных нет,
         делается запрос к БД, и результат сохраняется в Redis.
         """
-        cached_data = cache.get("users_list_cache")
+        cached_data = cache.get(USER_CACHE_KEY)
 
         if cached_data:
             return Response(cached_data)
@@ -135,7 +135,7 @@ class UserViewSet(viewsets.ModelViewSet):
         response = super().list(request, *args, **kwargs)
 
         # Сохраняем данные в кеш
-        cache.set('users_list_cache', response.data, timeout=None)
+        cache.set(USER_CACHE_KEY, response.data, timeout=None)
 
         return response
 
