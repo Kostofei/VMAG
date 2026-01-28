@@ -119,7 +119,6 @@ class UserViewSet(viewsets.ModelViewSet):
         cached_data = cache.get("users_list_cache")
 
         if cached_data:
-            print("Redis")
             return Response(cached_data)
 
         # Если в кеше пусто — получаем данные через стандартный метод
