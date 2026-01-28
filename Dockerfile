@@ -10,6 +10,12 @@ COPY requirements.txt .
 # Устанавливаем зависимости
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Устанавливаем системные зависимости для браузеров
+RUN playwright install-deps
+
+# Скачиваем сам Chromium
+RUN playwright install chromium
+
 # Копируем весь проект в контейнер
 COPY . .
 

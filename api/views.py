@@ -6,7 +6,7 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from asgiref.sync import async_to_sync
-from drf_spectacular.utils import extend_schema, OpenApiExample
+from drf_spectacular.utils import extend_schema, OpenApiExample, OpenApiParameter
 
 from .serializers import FlightSearchSerializer, UserSerializer
 from flights.services import FlightParser
@@ -74,6 +74,16 @@ class FlightSearchView(APIView):
         return f"flights_search_{hashlib.md5(encoded_data).hexdigest()}"
 
 
+@extend_schema(
+    parameters=[
+        OpenApiParameter(
+            name='id',
+            type=int,
+            location=OpenApiParameter.PATH,
+            description='Уникальный идентификатор пользователя (ID)'
+        ),
+    ]
+)
 @extend_schema(tags=['users'])
 class UserViewSet(viewsets.ModelViewSet):
     """
