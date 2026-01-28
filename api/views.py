@@ -6,7 +6,9 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from asgiref.sync import async_to_sync
-from drf_spectacular.utils import extend_schema, OpenApiExample, OpenApiParameter
+from drf_spectacular.utils import extend_schema, OpenApiExample
+from rest_framework.decorators import api_view
+from rest_framework.reverse import reverse
 
 from .serializers import FlightSearchSerializer, UserSerializer
 from flights.services import FlightParser
@@ -157,3 +159,14 @@ class UserViewSet(viewsets.ModelViewSet):
         if self.action == 'create':
             return [AllowAny()]
         return [IsAuthenticated()]
+
+
+@api_view(['GET'])
+def api_root(request, format=None):
+    """Корневой эндпоинт API, возвращающий список всех доступных ресурсов."""
+    return Response({
+        'users': reverse('user-list', request=request),
+        'flights': reverse('flight-search', request=request),
+        'token_obtain_pair': reverse('token_obtain_pair', request=request),
+        'token_refresh': reverse('token_refresh', request=request),
+    })
