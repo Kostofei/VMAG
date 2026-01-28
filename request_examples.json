@@ -1,0 +1,58 @@
+[
+{
+    "legs": [
+        {
+            "origin": "CHI",
+            "destination": "NYC",
+            "date": "01/29/2026"
+        },
+ {
+            "origin": "NYC",
+            "destination": "OKC",
+            "date": "01/30/2026"
+        },
+ {
+            "origin": "OKC",
+            "destination": "CHI",
+            "date": "01/30/2026"
+        }
+    ],
+    "ADT": "1",
+    "CNN": "0",
+    "INF": "0",
+   "cabin":"C"
+},
+
+{
+    "legs": [
+        {
+            "origin": "CHI",
+            "destination": "NYC",
+            "date": "01/30/2026"
+        },
+ {
+            "origin": "NYC",
+            "destination": "CHI",
+            "date": "01/31/2026"
+        }
+    ],
+    "ADT": "1",
+    "CNN": "1",
+    "INF": "0",
+   "cabin":"C"
+},
+
+{
+    "legs": [
+        {
+            "origin": "CHI",
+            "destination": "NYC",
+            "date": "01/29/2026"
+        }
+    ],
+    "ADT": "1",
+    "CNN": "0",
+    "INF": "0",
+   "cabin":"C"
+}
+]
