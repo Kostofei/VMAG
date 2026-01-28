@@ -4,9 +4,9 @@ from django.core.cache import cache
 from rest_framework import status, viewsets
 from rest_framework.views import APIView
 from rest_framework.response import Response
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import IsAuthenticated, AllowAny
 from asgiref.sync import async_to_sync
-from drf_spectacular.utils import extend_schema
+from drf_spectacular.utils import extend_schema, OpenApiExample
 
 from .serializers import FlightSearchSerializer, UserSerializer
 from flights.services import FlightParser
@@ -20,8 +20,8 @@ class FlightSearchView(APIView):
     """
 
     @extend_schema(
-        request=FlightSearchSerializer,  # Это добавит поле ввода JSON
-        responses={200: FlightSearchSerializer(many=True)},  # Опционально: что вернет
+        request=FlightSearchSerializer,
+        responses={200: FlightSearchSerializer(many=True)},
         description="Эндпоинт для поиска авиабилетов..."
     )
     def post(self, request):
@@ -87,9 +87,59 @@ class UserViewSet(viewsets.ModelViewSet):
     """
     queryset = User.objects.all()
     serializer_class = UserSerializer
-    # Пока разрешим доступ только авторизованным пользователям
     permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        request=UserSerializer,
+        examples=[
+            OpenApiExample(
+                'Пример регистрации',
+                summary='Создание нового пользователя',
+                description='Пример запроса для регистрации пользователя',
+                value={
+                    'username': 'пользователь',
+                    'email': 'user@example.com',
+                    'password': 'пароль'
+                },
+                request_only=True,
+                response_only=False,
+            ),
+        ]
+    )
+    def create(self, request, *args, **kwargs):
+        return super().create(request, *args, **kwargs)
+
+    def list(self, request, *args, **kwargs):
+        """
+        Возвращает список пользователей. Данные кешируются в Redis.
+
+        Сначала проверяется наличие данных в кеше. Если данных нет,
+        делается запрос к БД, и результат сохраняется в Redis.
+        """
+        cached_data = cache.get("users_list_cache")
+
+        if cached_data:
+            print("Redis")
+            return Response(cached_data)
+
+        # Если в кеше пусто — получаем данные через стандартный метод
+        response = super().list(request, *args, **kwargs)
+
+        # Сохраняем данные в кеш
+        cache.set('users_list_cache', response.data, timeout=None)
+
+        return response
 
     def get_queryset(self):
         """Возвращает набор данных для текущего запроса."""
         return super().get_queryset()
+
+    def get_permissions(self):
+        """
+        Назначает права доступа в зависимости от выполняемого действия.
+        - Регистрация (create): Разрешена всем.
+        - Остальные действия: Требуют авторизации.
+        """
+        if self.action == 'create':
+            return [AllowAny()]
+        return [IsAuthenticated()]

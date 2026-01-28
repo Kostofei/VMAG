@@ -1,4 +1,5 @@
 from rest_framework import serializers
+from users.models import User
 
 
 class LegSerializer(serializers.Serializer):
@@ -23,10 +24,6 @@ class FlightSearchSerializer(serializers.Serializer):
         ],
         default='C'
     )
-
-
-from rest_framework import serializers
-from users.models import User
 
 
 class UserSerializer(serializers.ModelSerializer):
